@@ -33,23 +33,33 @@ class ServerNetwork:
             while True:
                 client, addr = self.sock.accept()
                 logging.info(f"network: Connection from {addr}")
-                transport = paramiko.Transport(client)
-                transport.add_server_key(self.server_key)
-                ssh_server = SSHServer()
-                transport.start_server(server=ssh_server)
-                channel = transport.accept(20)
-                
-                if channel is None:
-                    logging.warning("network: No channel opened by client")
-                    continue
+                # Each connection's SSH handshake/session is wrapped in its
+                # own try/except so that a single bad or incomplete
+                # connection (e.g. a plain TCP probe with no SSH banner)
+                # cannot kill the accept loop and take down the whole
+                # server for every other client.
+                try:
+                    transport = paramiko.Transport(client)
+                    transport.add_server_key(self.server_key)
+                    ssh_server = SSHServer()
+                    transport.start_server(server=ssh_server)
+                    channel = transport.accept(20)
 
-                logging.info("network: Channel opened, starting communication")
-                # NOTE: this call blocks until the client disconnects, so the
-                # accept loop cannot service another connection concurrently.
-                # A threaded/async rewrite is out of scope here; the
-                # unbounded-buffer half of this finding is fixed in
-                # SSHServer.handle_client via MAX_BUFFER_SIZE.
-                ssh_server.handle_client(channel)
+                    if channel is None:
+                        logging.warning("network: No channel opened by client")
+                        continue
+
+                    logging.info("network: Channel opened, starting communication")
+                    # NOTE: this call blocks until the client disconnects, so
+                    # the accept loop cannot service another connection
+                    # concurrently. A threaded/async rewrite is out of scope
+                    # here; the unbounded-buffer half of this finding is
+                    # fixed in SSHServer.handle_client via MAX_BUFFER_SIZE.
+                    ssh_server.handle_client(channel)
+                except Exception as e:
+                    logging.error(f"network: Error handling connection from {addr}: {e}")
+                finally:
+                    client.close()
         except Exception as e:
             logging.error(f"network: Failed to start service: {e}")
             raise

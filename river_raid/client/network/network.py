@@ -27,13 +27,25 @@ class ClientNetwork:
         logging.info("Establishing SSH connection to server...")
         try:
             self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Public-key auth is intentionally never attempted here: the
+            # server's check_auth_publickey always fails closed (see
+            # ssh_server.py), so a key-based attempt can never succeed
+            # server-side. Passing key_filename to paramiko also triggers an
+            # unrelated bug where the modern "OPENSSH PRIVATE KEY" format
+            # (ssh-keygen's default since OpenSSH 7.8) gets misidentified as
+            # a DSA key during auto-detection, raising
+            # "q must be exactly 160, 224, or 256 bits long" instead of
+            # falling through to password auth. look_for_keys/allow_agent
+            # are also disabled so no ambient key on the machine running the
+            # client is tried either -- password is the only auth method
+            # this server supports.
             self.ssh_client.connect(
                 self.host,
                 port=self.port,
                 username=self.username,
-                key_filename=self.key_filename,
-                passphrase=self.key_passphrase,
-                password=self.password
+                password=self.password,
+                look_for_keys=False,
+                allow_agent=False,
             )
             self.channel = self.ssh_client.get_transport().open_session()
             self.buffer = ""

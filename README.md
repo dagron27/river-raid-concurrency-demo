@@ -42,8 +42,9 @@ verified directly against the source rather than assumed:
      (`multiprocessing.shared_memory` or similar). No code in this
      repository uses OS shared memory directly.
    - **SSH RSA public/private key authentication was required here and is
-     NOT what the code currently does.** The client still supports
-     presenting a key file (`CLIENT_KEY_FILENAME`), but the server's
+     NOT what the code currently does.** The client no longer attempts
+     key-based auth at all (`CLIENT_KEY_FILENAME`/`CLIENT_KEY_PASSPHRASE`
+     are read but unused -- see Known Issues), since the server's
      `check_auth_publickey` (`river_raid/server/network/ssh_server.py`)
      unconditionally returns `AUTH_FAILED` -- key-based auth is disabled
      server-side, full stop. This was a deliberate choice made during this
@@ -343,10 +344,24 @@ for rationale. The Informational log-rotation item was not addressed
   `RIVER_RAID_PASSWORD` set, the server refuses all connections and the
   client cannot log in -- this is intentional fail-closed behavior, not a
   bug.
+  **Follow-up fix:** the client kept passing `key_filename`/`passphrase` to
+  `ssh_client.connect()` alongside `password` even after this change, so it
+  still attempted (and always failed) key-based auth before falling back to
+  password. That doomed-to-fail attempt also triggered an unrelated
+  paramiko bug: `ssh-keygen`'s modern default key format ("OPENSSH PRIVATE
+  KEY") gets misidentified as a DSA key during paramiko's key-type
+  auto-detection, raising `ValueError: q must be exactly 160, 224, or 256
+  bits long` instead of falling through to password auth -- breaking the
+  connection entirely rather than just wasting an auth round trip.
+  `ClientNetwork.connect()` no longer passes `key_filename`/`passphrase`
+  and explicitly sets `look_for_keys=False, allow_agent=False`, so only
+  password auth is ever attempted, matching what the server actually
+  supports.
 
 - **[Medium] Single-threaded accept loop with unbounded per-connection
-  buffer (denial of service) -- Partially fixed (buffer capped; accept loop
-  unchanged).**
+  buffer (denial of service) -- Partially fixed (buffer capped and
+  one-bad-connection crash fixed; still one connection at a time by
+  design).**
   `river_raid/server/network/network.py`, `start_service()` runs a
   synchronous `while True: self.sock.accept()` loop and calls
   `ssh_server.handle_client(channel)` inline, blocking on that one
@@ -363,6 +378,17 @@ for rationale. The Informational log-rotation item was not addressed
   `MAX_BUFFER_SIZE` (65536 bytes) constant was added; if the buffer exceeds
   this without a newline being found, the connection is closed instead of
   letting the buffer keep growing.
+  **Fix applied (a related crash found while wiring up CI):** the entire
+  `while True: accept()` loop body was wrapped in a single outer
+  `try/except`, so any exception from one connection -- for example a
+  plain TCP connect with no SSH banner at all, which raises during
+  paramiko's handshake -- propagated out of the loop and killed the whole
+  server process, not just that one connection. This is a real
+  denial-of-service: one malformed connection attempt (accidental or
+  deliberate) permanently took the server down until it was manually
+  restarted. Each iteration's connection handling is now wrapped in its
+  own `try/except`, so a failed handshake is logged and the loop continues
+  accepting new connections instead of crashing.
 
 - **[Low] SSH host key is trusted with no verification -- Accepted
   limitation, not fixed.**
