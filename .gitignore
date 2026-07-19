@@ -29,3 +29,5 @@ build/
 # OS-specific files
 .DS_Store
 Thumbs.db
+# Excluded: exceeds GitHub's 100MB file size limit (embedded video ~141MB)
+docs/Final Task Group 11.pptx
