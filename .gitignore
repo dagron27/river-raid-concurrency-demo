@@ -1,0 +1,31 @@
+# Byte-compiled files
+__pycache__/
+*.pyc
+*.pyo
+*$py.class
+
+# Virtual environments
+env/
+venv/
+new_venv/
+.venv/
+.new_venv/
+
+# Dependency management
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Logs and environment files
+*.log
+.env
+*.env
+
+# IDE files
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db

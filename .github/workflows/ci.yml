@@ -1,0 +1,213 @@
+# CI for river_raid/, the SSH client/server subproject of this repo.
+#
+# This is a full end-to-end test, not just a syntax check: it actually
+# starts the real SSH server process, then drives the real client
+# connection code (river_raid/client/network/network.py) against it over a
+# real TCP/SSH handshake, both with a correct and an incorrect password.
+#
+# Background (see README.md's Security Findings section): the server used
+# to accept any username/password/key unconditionally. That was fixed --
+# river_raid/server/network/ssh_server.py's check_auth_password now
+# requires a RIVER_RAID_PASSWORD environment variable and only returns
+# AUTH_SUCCESSFUL on an exact match; river_raid/client/network/network.py
+# was updated to read the same variable and send it as the SSH password.
+# This workflow exists to prove that fix actually works end-to-end and to
+# catch any regression of it, which a plain "does it import"/syntax check
+# would never catch.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  e2e-ssh-test:
+    name: river_raid end-to-end SSH auth test
+    runs-on: ubuntu-latest
+
+    # Shared configuration for the server-start step and both client
+    # connection-test steps below. RIVER_RAID_PASSWORD is the fixed test
+    # value the server is started with and that the "positive" test
+    # connects with; the "negative" test deliberately overrides it on the
+    # client side only (see that step). CLIENT_USERNAME is not
+    # independently validated by the server (see README.md), so any value
+    # works there. SERVER_KEY_FILENAME/CLIENT_KEY_FILENAME point at a
+    # throwaway key pair generated later in this job, mirroring
+    # README.md's "Environment Setup" instructions exactly.
+    env:
+      RIVER_RAID_PASSWORD: ci-test-password-123
+      SERVER_HOST: 127.0.0.1
+      SERVER_PORT: 2200
+      SERVER_KEY_FILENAME: server_key
+      CLIENT_HOST: 127.0.0.1
+      CLIENT_PORT: 2200
+      CLIENT_USERNAME: player
+      CLIENT_KEY_FILENAME: server_key
+      CLIENT_KEY_PASSPHRASE: ""
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies from requirements.txt (best effort)
+        # README.md's "Dependencies" section documents that the checked-in
+        # requirements.txt currently lists standard-library module names
+        # (tk, random, os, time) rather than the real third-party
+        # dependencies, and that `pip install -r requirements.txt` is
+        # expected to fail on `tk`. We still run it here, per the
+        # requirement to install requirements.txt, but do not let that
+        # documented failure fail the job -- the actual runtime
+        # dependencies are installed explicitly in the next step either
+        # way, so later steps are unaffected.
+        run: |
+          pip install -r requirements.txt || echo "requirements.txt install failed (expected per README.md); continuing with explicit installs below."
+
+      - name: Install actual runtime dependencies
+        # paramiko (SSH transport) and python-dotenv (.env loading) are
+        # the real dependencies river_raid/ needs, per README.md's
+        # "Dependencies" / "Environment Setup" sections.
+        run: |
+          pip install paramiko python-dotenv
+
+      - name: Compile-check every .py file under river_raid/
+        # Basic syntax sanity check across the whole subproject. This is
+        # intentionally not the main point of this workflow -- it only
+        # proves the files parse, not that the SSH auth flow works, which
+        # is what the end-to-end steps below actually test.
+        run: |
+          find river_raid -name "*.py" -print0 | xargs -0 -n1 python -m py_compile
+
+      - name: Generate a throwaway SSH host key for the server
+        # Mirrors README.md's "Environment Setup" step 1 exactly:
+        #   ssh-keygen -t rsa -b 2048 -f server_key -N ""
+        # This key is generated fresh for this CI run only, never
+        # committed, and reused for both SERVER_KEY_FILENAME (host key)
+        # and CLIENT_KEY_FILENAME (matching README's example .env, where
+        # both point at the same file). It lives in river_raid/ because
+        # the server and client are run with that as their working
+        # directory (see the next step).
+        working-directory: river_raid
+        run: |
+          ssh-keygen -t rsa -b 2048 -f server_key -N ""
+
+      - name: Start the SSH server in the background
+        # Entry point per README.md step 3. Imports in this subproject are
+        # package-relative to river_raid/ (no top-level __init__.py), so
+        # this must run with river_raid/ as the working directory, exactly
+        # as README.md instructs for `python -m server.main`. Backgrounded
+        # with nohup so this step returns immediately; stdout/stderr are
+        # captured to a log file for debugging if a later step fails.
+        working-directory: river_raid
+        run: |
+          nohup python -m server.main > server_output.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for the server to start listening
+        # Polls the port with a short retry loop instead of a fixed sleep,
+        # so the job doesn't flake if the runner is briefly slow to start
+        # the process, and doesn't waste time once the server is actually
+        # ready. Uses bash's built-in /dev/tcp instead of an external tool
+        # like nc, so it doesn't depend on anything beyond bash itself.
+        working-directory: river_raid
+        run: |
+          for i in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/2200) 2>/dev/null; then
+              exec 3<&- 3>&-
+              echo "Server is listening on 127.0.0.1:2200."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not start listening within 30 seconds." >&2
+          echo "--- server_output.log ---"
+          cat server_output.log 2>/dev/null || true
+          exit 1
+
+      - name: Positive auth test -- correct password is accepted
+        # Drives the real client connection code (ClientNetwork.connect()
+        # in river_raid/client/network/network.py), the same code
+        # client/main.py uses, but without starting the Tkinter game loop
+        # -- proving the SSH transport + password auth handshake succeeds
+        # end-to-end is the goal here, not playing a game session.
+        # RIVER_RAID_PASSWORD is inherited from the job-level env above,
+        # unmodified, so it matches what the server was started with.
+        # Success signal: connect() returns without raising. That means
+        # paramiko completed the SSH transport handshake, the server's
+        # check_auth_password matched the password, and a channel was
+        # opened -- i.e. a real, successful, authenticated connection.
+        working-directory: river_raid
+        run: |
+          python - <<'EOF'
+          import sys
+          from client.network.network import ClientNetwork
+
+          client = ClientNetwork()
+          try:
+              client.connect()
+          except Exception as exc:
+              print(f"POSITIVE AUTH TEST FAILED: expected connect() to succeed with the correct RIVER_RAID_PASSWORD, but it raised: {exc!r}")
+              sys.exit(1)
+
+          print("POSITIVE AUTH TEST PASSED: SSH transport handshake and password authentication succeeded with the correct password.")
+          client.close()
+          EOF
+
+      - name: Negative auth test -- wrong password is rejected
+        # Direct regression test for the security fix described at the top
+        # of this file: before remediation, check_auth_password and
+        # check_auth_publickey in ssh_server.py returned
+        # paramiko.AUTH_SUCCESSFUL unconditionally, so literally any
+        # password (or none) was accepted. A positive-only test would not
+        # catch a regression back to that behavior -- a server that
+        # accepts everything also passes the positive test above. This
+        # step builds a ClientNetwork the same way as the positive test,
+        # then deliberately overwrites its .password attribute with a
+        # value that does not match RIVER_RAID_PASSWORD before calling
+        # connect(), and asserts that paramiko raises
+        # AuthenticationException -- i.e. that the server actually
+        # rejected the bad credentials rather than the connection
+        # silently succeeding.
+        working-directory: river_raid
+        run: |
+          python - <<'EOF'
+          import sys
+          import paramiko
+          from client.network.network import ClientNetwork
+
+          client = ClientNetwork()
+          client.password = "definitely-wrong-password-for-ci-negative-test"
+
+          try:
+              client.connect()
+          except paramiko.AuthenticationException:
+              print("NEGATIVE AUTH TEST PASSED: server correctly rejected a connection using an incorrect password.")
+              sys.exit(0)
+          except Exception as exc:
+              print(f"NEGATIVE AUTH TEST FAILED: expected paramiko.AuthenticationException for a wrong password, got a different error instead: {exc!r}")
+              sys.exit(1)
+
+          print("NEGATIVE AUTH TEST FAILED: connect() succeeded with an incorrect password -- the server is not rejecting bad credentials.")
+          client.close()
+          sys.exit(1)
+          EOF
+
+      - name: Stop the background SSH server
+        # Runs regardless of whether the steps above passed or failed, so
+        # a failed or interrupted test run never leaves an orphaned server
+        # process (and a socket bound to the port) behind on the runner.
+        if: always()
+        working-directory: river_raid
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" 2>/dev/null || true
+            echo "Stopped server process $(cat server.pid)."
+          else
+            echo "No server.pid file found; nothing to stop."
+          fi
+          echo "--- server_output.log ---"
+          cat server_output.log 2>/dev/null || true
