@@ -2,9 +2,12 @@
 
 ![CI](https://github.com/dagron27/river-raid-concurrency-demo/actions/workflows/ci.yml/badge.svg)
 
-**Assignment:** `310-fa24-final-task` — final project for CSCI 310,
-Introduction to Operating Systems, Fall 2024. (Corrected from an earlier,
-incorrect "course code 320" note in this README; the course was CSCI 310.)
+**Course:** `CSCI 310, Introduction to Operating Systems, Fall 2025`
+
+**Assignment:** `310-fa24-final-task`
+
+(Corrected from an earlier, incorrect "course code 320" note in this
+README; the course was CSCI 310.)
 
 ## Assignment Intent
 
@@ -79,7 +82,7 @@ have stayed a localhost demo throughout.
 ## Contributions
 
 This was originally a three-person group submission for CSCI 310 (Fall
-2024): Ben Tran, Justin Halvorson, and Daniel Leone. This repository is
+2025): Ben Tran, Justin Halvorson, and Daniel Leone. This repository is
 hosted here by Daniel Leone as a personal portfolio copy; **the LICENSE only
 covers Daniel Leone's own contributions** -- see LICENSE for the full scope
 statement and rationale. This section summarizes, at file/component level
