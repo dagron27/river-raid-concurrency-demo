@@ -297,10 +297,11 @@ findings from the prior review.
   `BOARD_WIDTH`/`BOARD_HEIGHT`. **Fix-it plan:** delete it, or wire it up
   behind a `--debug` CLI flag if console rendering is ever wanted for
   headless testing.
-- **Empty `setup.py`.** Present in the repo but 0 bytes -- not a working
-  package script; `pip install .` will not work. **Fix-it plan:** either
-  fill in a minimal `setuptools` config if packaging is desired, or delete
-  it to avoid the false impression that installation via `setup.py` works.
+- **Empty `setup.py` -- removed.** Was present in the repo but 0 bytes --
+  not a working package script (`pip install .` would not have worked).
+  Removed to avoid the false impression that installation via `setup.py`
+  works; if packaging is ever wanted, add a minimal `setuptools` config
+  from scratch.
 - **Stale `requirements.txt`.** Lists `tk`, `random`, `os`, `time` (standard
   library / not real pip packages) instead of the actual third-party
   dependencies, `paramiko` and `python-dotenv`. See
