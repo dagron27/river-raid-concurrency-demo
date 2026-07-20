@@ -68,7 +68,13 @@ verified directly against the source rather than assumed:
    different mechanism than the rubric specified.
 5. **Documentation and demo.** Out of scope for this repository -- the
    rubric's Word/PPT documentation and video demo were separate submission
-   artifacts, not something tracked in the source code itself.
+   artifacts, not something tracked in the source code itself. One PPT
+   deliverable, `docs/Final Task Group 11.pptx`, was actually present in
+   the original local working copy this repository was prepared from,
+   but is deliberately excluded from git via `.gitignore` (embedded
+   video pushes it to ~141MB, over GitHub's 100MB per-file limit) --
+   it was present and then excluded, not simply never part of this
+   project, and it will not appear in a fresh clone.
 6. **Submission.** Same as above -- a D2L/course-LMS submission process,
    not something this repository can speak to.
 
